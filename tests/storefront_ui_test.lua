@@ -300,6 +300,9 @@ package.loaded["storefront_cache"] = {
     invalidate = function()
         _mock_cache_data = { plugin = { fetched_at = 0, repos = {} } }
     end,
+    purgeMem = function()
+        _mock_cache_data = { plugin = { fetched_at = 0, repos = {} } }
+    end,
     listRepos = function() return _mock_cache_data.plugin and _mock_cache_data.plugin.repos or {} end,
     isLegacyFormat = function() return false end,
     getRepo = function() return nil end,
@@ -2323,6 +2326,42 @@ do
     check("onSuspend called CatalogClient.cancelCatalogFetch", CatalogClient._async_pid == nil, true)
     check("onSuspend cleared CatalogClient._poll_fd", CatalogClient._poll_fd == nil, true)
     check("onSuspend cleared CatalogClient._poll_func", CatalogClient._poll_func == nil, true)
+
+    local Cache = require("storefront_cache")
+    check("Cache has purgeMem function", type(Cache.purgeMem) == "function", true)
+    Cache.purgeMem()
+    check("Cache.purgeMem resets in-memory data", Cache._loaded == nil or Cache._loaded == false, true)
+
+    -- Test closeBrowserMenu worker termination
+    MainStorefront._active_thumb_worker = { pid = 55555, fd = 44444 }
+    local prev_task_id = MainStorefront._ss_thumb_task_id or 0
+    MainStorefront:closeBrowserMenu()
+    check("closeBrowserMenu bumps _ss_thumb_task_id", (MainStorefront._ss_thumb_task_id or 0) > prev_task_id, true)
+    check("closeBrowserMenu terminates active thumbnail worker", MainStorefront._active_thumb_worker == nil, true)
+
+    -- Test onReaderReady registers storefront
+    local mock_reader_ui = {
+        registered = {},
+        registerModule = function(self_ui, name, mod, always)
+            self_ui.registered[name] = mod
+        end
+    }
+    MainStorefront:onReaderReady(mock_reader_ui)
+    check("onReaderReady registers storefront module with ReaderUI", mock_reader_ui.registered["storefront"] == MainStorefront, true)
+
+    -- Test Device.intoScreenSaver power hook
+    local Device = require("device")
+    local suspend_fired = false
+    local orig_suspend = MainStorefront.onSuspend
+    MainStorefront.onSuspend = function(self_sf)
+        suspend_fired = true
+        orig_suspend(self_sf)
+    end
+    if Device and Device.intoScreenSaver then
+        Device:intoScreenSaver()
+        check("Device.intoScreenSaver triggers Storefront:onSuspend", suspend_fired, true)
+    end
+    MainStorefront.onSuspend = orig_suspend
 
     if ffiutil then
         ffiutil.terminateSubProcess = orig_term

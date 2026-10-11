@@ -158,6 +158,19 @@ function Cache.init()
     _loaded = true
 end
 
+function Cache.purgeMem()
+    _data = {
+        plugin = { fetched_at = 0, repos = {} },
+        patch = { fetched_at = 0, repos = {} },
+        font = { fetched_at = 0, repos = {} },
+    }
+    _by_id = {}
+    _by_name = {}
+    _by_plugin_name = {}
+    _sorted_cache = {}
+    _loaded = false
+end
+
 function Cache.storeRepos(kind, repos, custom_fetched_at)
     if not kind or type(repos) ~= "table" then return end
     Cache.init()

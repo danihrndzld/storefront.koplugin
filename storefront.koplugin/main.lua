@@ -8488,6 +8488,10 @@ function Storefront:buildScreensaverEntries(available_list_height, available_lis
 
         local function applyThumbnail(card, path, inner_w, img_h)
             if not (card and card._img_widget and path) then return end
+            local ok_dev, Device = pcall(require, "device")
+            if ok_dev and Device and (Device.screen_saver_mode or (Device.isSuspended and Device:isSuspended())) then
+                return
+            end
             local ok_cov, res_cov = pcall(StorefrontScreensavers.createCoverImageWidget, path, inner_w, img_h)
             if ok_cov and res_cov then
                 card._img_widget[1] = res_cov
@@ -8843,6 +8847,30 @@ function Storefront:closeBrowserMenu(opts)
         _screensaver_warmup_timer_fn = nil
     end
     self:dismissProgressMessage()
+
+    -- Cancel any active thumbnail generation workers immediately
+    self._ss_thumb_task_id = (self._ss_thumb_task_id or 0) + 1
+    if self._active_thumb_worker then
+        local w = self._active_thumb_worker
+        self._active_thumb_worker = nil
+        pcall(function()
+            local ok_ffi, ffiutil = pcall(require, "ffi/util")
+            if not ok_ffi then ok_ffi, ffiutil = pcall(require, "ffiutil") end
+            if ok_ffi and ffiutil then
+                if w.pid and ffiutil.terminateSubProcess then
+                    pcall(ffiutil.terminateSubProcess, w.pid)
+                    if ffiutil.isSubProcessDone then
+                        pcall(ffiutil.isSubProcessDone, w.pid, true)
+                    end
+                end
+                if w.fd and (ffiutil.readAllFromFD or ffiutil.readFromFD) then
+                    local read_fn = ffiutil.readAllFromFD or ffiutil.readFromFD
+                    pcall(read_fn, w.fd)
+                end
+            end
+        end)
+    end
+
     if self.browser_menu then
         UIManager:close(self.browser_menu)
         self.browser_menu = nil
@@ -8856,7 +8884,7 @@ function Storefront:closeBrowserMenu(opts)
                 StorefrontScreensavers.invalidateMemCache()
             end
         end)
-        collectgarbage("step", 200)
+        collectgarbage("collect")
     end
 end
 
@@ -10876,6 +10904,13 @@ end
 
 
 
+function Storefront:onReaderReady(ui)
+    self.ui = ui
+    if self.ui and self.ui.registerModule then
+        pcall(self.ui.registerModule, self.ui, "storefront", self, true)
+    end
+end
+
 function Storefront:init()
     Localization:init(self.path)
     StorefrontLogger.reset()
@@ -10903,6 +10938,36 @@ function Storefront:init()
         if UIManager and UIManager.event_hook and UIManager.event_hook.registerWidget then
             UIManager.event_hook:registerWidget("Suspend", self)
             UIManager.event_hook:registerWidget("Resume", self)
+        end
+    end)
+    -- Hook directly into Device power lifecycle so onSuspend/onResume always run regardless of active UI
+    pcall(function()
+        local ok_dev, Device = pcall(require, "device")
+        if ok_dev and Device then
+            if not Device._sf_into_hooked and Device.intoScreenSaver then
+                Device._sf_into_hooked = true
+                local orig_into = Device.intoScreenSaver
+                Device.intoScreenSaver = function(dev_self, ...)
+                    pcall(function()
+                        if Storefront.instance and Storefront.instance.onSuspend then
+                            Storefront.instance:onSuspend()
+                        end
+                    end)
+                    return orig_into(dev_self, ...)
+                end
+            end
+            if not Device._sf_out_hooked and Device.outofScreenSaver then
+                Device._sf_out_hooked = true
+                local orig_out = Device.outofScreenSaver
+                Device.outofScreenSaver = function(dev_self, ...)
+                    pcall(function()
+                        if Storefront.instance and Storefront.instance.onResume then
+                            Storefront.instance:onResume()
+                        end
+                    end)
+                    return orig_out(dev_self, ...)
+                end
+            end
         end
     end)
     
@@ -11207,6 +11272,11 @@ function Storefront:scheduleNotificationTimer()
 
     _notification_timer_fn = function()
         _notification_timer_fn = nil
+        local ok_dev, Device = pcall(require, "device")
+        if ok_dev and Device and ((Device.isSuspended and Device:isSuspended()) or Device.screen_saver_mode) then
+            logger.info("Storefront: skipping notification timer — device suspended or in screensaver mode")
+            return
+        end
         pcall(function()
             if not NotificationMgr.isEnabled() then return end
             local is_online = NotificationMgr.isNetworkConnected()
@@ -11235,6 +11305,11 @@ function Storefront:scheduleNotificationTimer()
 end
 
 function Storefront:onNetworkConnected()
+    local ok_dev, Device = pcall(require, "device")
+    if ok_dev and Device and ((Device.isSuspended and Device:isSuspended()) or Device.screen_saver_mode) then
+        logger.info("Storefront: skipping onNetworkConnected sync — device suspended or in screensaver mode")
+        return
+    end
     local ok_nm, NotificationMgr = pcall(require, "storefront_notification_mgr")
     if ok_nm and NotificationMgr and NotificationMgr.isEnabled() and NotificationMgr.shouldCheckNow(nil, true) then
         local CatalogClient = require("storefront_net_catalog")
@@ -11337,14 +11412,26 @@ function Storefront:onSuspend()
             StorefrontScreensavers.invalidateMemCache()
         end
     end)
+    pcall(function()
+        local ok_c, Cache = pcall(require, "storefront_cache")
+        if ok_c and Cache and Cache.purgeMem then
+            Cache.purgeMem()
+        end
+    end)
 
     -- 6. Trigger Lua garbage collector immediately before device goes to sleep
+    collectgarbage("collect")
     collectgarbage("collect")
 end
 
 function Storefront:onResume()
     logger.info("Storefront: onResume received")
     if StorefrontLogger then StorefrontLogger.info("Storefront: onResume received") end
+    pcall(function()
+        if self.scheduleNotificationTimer then
+            self:scheduleNotificationTimer()
+        end
+    end)
 end
 
 function Storefront:onCloseWidget()
