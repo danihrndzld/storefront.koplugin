@@ -232,6 +232,7 @@ do
         local b_data = json.decode(fb:read("*a"))
         fb:close()
         check("bundled staging plugins fetched_at is 0", b_data and b_data.fetched_at == 0)
+        check("bundled staging repo fetched_at is 0", b_data and b_data.repos and b_data.repos[1] and b_data.repos[1].fetched_at == 0)
         os.remove(tmp_plugins)
     else
         check("bundled staging plugins file exists", false)

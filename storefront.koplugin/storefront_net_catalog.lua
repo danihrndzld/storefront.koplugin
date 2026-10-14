@@ -1091,7 +1091,7 @@ function CatalogClient.fetchAndUpdateCacheAsync(url_to_fetch, callback, is_backg
 
             collectgarbage("collect")
 
-            local res_main = main_proc_ok and "updated" or (main_not_mod and "not_modified" or ("err:" .. tostring(dl_status_or_err)))
+            local res_main = main_proc_ok and (used_bundled and "bundled" or "updated") or (main_not_mod and "not_modified" or ("err:" .. tostring(dl_status_or_err)))
             local res_ss = ss_proc_ok and "updated" or (ss_not_mod and "not_modified" or ("err:" .. tostring(ss_status_or_err)))
             local res_rb = rb_proc_ok and "updated" or (rb_not_mod and "not_modified" or ("err:" .. tostring(rb_status_or_err)))
 
@@ -1205,6 +1205,12 @@ function CatalogClient.fetchAndUpdateCacheAsync(url_to_fetch, callback, is_backg
 
             local is_ok_not_modified = (child_msg == "OK_NOT_MODIFIED" or child_msg:find("^OK_NOT_MODIFIED") ~= nil)
             local is_ok = (child_msg == "OK" or child_msg:find("^OK") ~= nil)
+
+            -- Bundled fallback: drop the stored ETag so the next fetch can't 304 and freeze the bundled list as fresh.
+            -- Cleared here, not in the child: the next fork inherits the parent's in-memory settings.
+            if child_msg:find("main=bundled", 1, true) then
+                CatalogClient.clearStoredEtag()
+            end
 
             if is_ok_not_modified and not (ok_swap_p or ok_swap_pt or ok_swap_f or ok_swap_ss or ok_swap_rb) then
                 CatalogClient.setLastFetchedScreensavers(os.time())
