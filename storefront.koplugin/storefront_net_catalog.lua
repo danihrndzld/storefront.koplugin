@@ -56,8 +56,15 @@ function CatalogClient.etagsToChildMsg()
 end
 
 function CatalogClient.applyEtagsFromChildMsg(msg)
+    local any_saved = false
     for key, etag in tostring(msg):gmatch("\nETAG (%S+) ([^\n]+)") do
-        saveEtag(key, etag)
+        if type(etag) == "string" and etag ~= "" then
+            StorefrontSettings:saveSetting(key, etag)
+            any_saved = true
+        end
+    end
+    if any_saved then
+        StorefrontSettings:flush()
     end
 end
 

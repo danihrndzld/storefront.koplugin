@@ -264,6 +264,9 @@ do
     check("parent saves main ETag from child msg", CatalogClient.getStoredEtag() == 'W/"main1"')
     check("parent saves screensaver ETag from child msg", CatalogClient.getStoredScreensaverEtag() == '"ss1"')
     check("result prefix survives after stripping ETags", msg:gsub("\nETAG [^\n]*", "") == "OK:main=updated,ss=updated,rb=not_modified")
+
+    StorefrontSettings:delSetting("catalog_etag")
+    StorefrontSettings:delSetting("screensaver_catalog_etag")
 end
 
 -- ----------------------------------------------------
